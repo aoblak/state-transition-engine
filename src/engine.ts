@@ -1,4 +1,5 @@
 import type {
+  DecisionTraceEntry,
   EngineOptions,
   InvariantResult,
   Outcome,
@@ -70,10 +71,37 @@ export class StateTransitionEngine<TData = unknown, TPayload = unknown> {
 
   transition(state: State<TData>, tension: Tension<TPayload>): Outcome<TData> {
     const context: TransitionContext<TData, TPayload> = { state, tension };
+    const decisionTrace: DecisionTraceEntry[] = [];
 
-    const rule = this.#rules.find(
-      (candidate) => matchesFrom(candidate.from, state.id) && candidate.when(context),
-    );
+    let rule: TransitionRule<TData, TPayload> | undefined;
+
+    for (const [ruleIndex, candidateRule] of this.#rules.entries()) {
+      if (!matchesFrom(candidateRule.from, state.id)) {
+        decisionTrace.push({
+          rule: candidateRule.name,
+          ruleIndex,
+          status: "source-mismatch",
+        });
+        continue;
+      }
+
+      if (!candidateRule.when(context)) {
+        decisionTrace.push({
+          rule: candidateRule.name,
+          ruleIndex,
+          status: "condition-false",
+        });
+        continue;
+      }
+
+      decisionTrace.push({
+        rule: candidateRule.name,
+        ruleIndex,
+        status: "selected",
+      });
+      rule = candidateRule;
+      break;
+    }
 
     if (!rule) {
       const reason = "No transition rule matched the current state and tension.";
@@ -91,6 +119,7 @@ export class StateTransitionEngine<TData = unknown, TPayload = unknown> {
           sourceState: state.id,
           candidateState: null,
           tensionType: tension.type,
+          decisionTrace,
           invariantResults: [],
         },
       };
@@ -133,6 +162,7 @@ export class StateTransitionEngine<TData = unknown, TPayload = unknown> {
           sourceState: state.id,
           candidateState: candidate.id,
           tensionType: tension.type,
+          decisionTrace,
           invariantResults,
         },
       };
@@ -151,6 +181,7 @@ export class StateTransitionEngine<TData = unknown, TPayload = unknown> {
         sourceState: state.id,
         candidateState: candidate.id,
         tensionType: tension.type,
+        decisionTrace,
         invariantResults,
       },
     };

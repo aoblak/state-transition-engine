@@ -44,6 +44,17 @@ export interface EngineOptions<TData = unknown, TPayload = unknown> {
 
 export type TransitionStatus = "applied" | "no-match" | "rejected";
 
+export type DecisionTraceStatus =
+  | "source-mismatch"
+  | "condition-false"
+  | "selected";
+
+export interface DecisionTraceEntry {
+  rule: string;
+  ruleIndex: number;
+  status: DecisionTraceStatus;
+}
+
 export interface InvariantResult {
   name: string;
   passed: boolean;
@@ -56,6 +67,7 @@ export interface TransitionProvenance {
   sourceState: StateId;
   candidateState: StateId | null;
   tensionType: string;
+  decisionTrace: readonly DecisionTraceEntry[];
   invariantResults: readonly InvariantResult[];
 }
 

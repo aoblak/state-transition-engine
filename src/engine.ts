@@ -7,6 +7,7 @@ import type {
   StateId,
   Tension,
   TransitionContext,
+  TransitionExecutionFailureDetails,
   TransitionInvariant,
   TransitionInvariantContext,
   TransitionRule,
@@ -57,6 +58,20 @@ function evaluateInvariant<TData, TPayload>(
   };
 }
 
+export class TransitionExecutionError extends Error {
+  readonly details: TransitionExecutionFailureDetails;
+
+  constructor(
+    message: string,
+    details: TransitionExecutionFailureDetails,
+    cause?: unknown,
+  ) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "TransitionExecutionError";
+    this.details = details;
+  }
+}
+
 export class StateTransitionEngine<TData = unknown, TPayload = unknown> {
   readonly #rules: readonly TransitionRule<TData, TPayload>[];
   readonly #invariants: readonly TransitionInvariant<TData, TPayload>[];
@@ -74,6 +89,7 @@ export class StateTransitionEngine<TData = unknown, TPayload = unknown> {
     const decisionTrace: DecisionTraceEntry[] = [];
 
     let rule: TransitionRule<TData, TPayload> | undefined;
+    let selectedRuleIndex = -1;
 
     for (const [ruleIndex, candidateRule] of this.#rules.entries()) {
       if (!matchesFrom(candidateRule.from, state.id)) {
@@ -85,7 +101,35 @@ export class StateTransitionEngine<TData = unknown, TPayload = unknown> {
         continue;
       }
 
-      if (!candidateRule.when(context)) {
+      let conditionMatched: boolean;
+
+      try {
+        conditionMatched = candidateRule.when(context);
+      } catch (error) {
+        decisionTrace.push({
+          rule: candidateRule.name,
+          ruleIndex,
+          status: "condition-error",
+        });
+
+        throw new TransitionExecutionError(
+          `Transition rule "${candidateRule.name}" failed while evaluating its condition.`,
+          {
+            phase: "condition",
+            rule: candidateRule.name,
+            ruleIndex,
+            invariant: null,
+            sourceState: state.id,
+            candidateState: null,
+            tensionType: tension.type,
+            decisionTrace: [...decisionTrace],
+            invariantResults: [],
+          },
+          error,
+        );
+      }
+
+      if (!conditionMatched) {
         decisionTrace.push({
           rule: candidateRule.name,
           ruleIndex,
@@ -100,6 +144,7 @@ export class StateTransitionEngine<TData = unknown, TPayload = unknown> {
         status: "selected",
       });
       rule = candidateRule;
+      selectedRuleIndex = ruleIndex;
       break;
     }
 
@@ -125,10 +170,43 @@ export class StateTransitionEngine<TData = unknown, TPayload = unknown> {
       };
     }
 
-    const candidate = rule.apply(context);
+    let candidate: State<TData>;
+
+    try {
+      candidate = rule.apply(context);
+    } catch (error) {
+      throw new TransitionExecutionError(
+        `Transition "${rule.name}" failed while applying its state change.`,
+        {
+          phase: "apply",
+          rule: rule.name,
+          ruleIndex: selectedRuleIndex,
+          invariant: null,
+          sourceState: state.id,
+          candidateState: null,
+          tensionType: tension.type,
+          decisionTrace: [...decisionTrace],
+          invariantResults: [],
+        },
+        error,
+      );
+    }
 
     if (!candidate.id) {
-      throw new Error(`Transition "${rule.name}" produced a state with an empty id.`);
+      throw new TransitionExecutionError(
+        `Transition "${rule.name}" produced a state with an empty id.`,
+        {
+          phase: "apply",
+          rule: rule.name,
+          ruleIndex: selectedRuleIndex,
+          invariant: null,
+          sourceState: state.id,
+          candidateState: candidate.id,
+          tensionType: tension.type,
+          decisionTrace: [...decisionTrace],
+          invariantResults: [],
+        },
+      );
     }
 
     const invariantContext: TransitionInvariantContext<TData, TPayload> = {
@@ -138,9 +216,30 @@ export class StateTransitionEngine<TData = unknown, TPayload = unknown> {
       transition: rule.name,
     };
 
-    const invariantResults = this.#invariants.map((invariant) =>
-      evaluateInvariant(invariant, invariantContext),
-    );
+    const invariantResults: InvariantResult[] = [];
+
+    for (const invariant of this.#invariants) {
+      try {
+        invariantResults.push(evaluateInvariant(invariant, invariantContext));
+      } catch (error) {
+        throw new TransitionExecutionError(
+          `Invariant "${invariant.name}" failed while validating transition "${rule.name}".`,
+          {
+            phase: "invariant",
+            rule: rule.name,
+            ruleIndex: selectedRuleIndex,
+            invariant: invariant.name,
+            sourceState: state.id,
+            candidateState: candidate.id,
+            tensionType: tension.type,
+            decisionTrace: [...decisionTrace],
+            invariantResults: [...invariantResults],
+          },
+          error,
+        );
+      }
+    }
+
     const failedInvariants = invariantResults.filter((result) => !result.passed);
 
     if (failedInvariants.length > 0) {

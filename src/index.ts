@@ -1,4 +1,7 @@
-export { StateTransitionEngine } from "./engine.js";
+export {
+  StateTransitionEngine,
+  TransitionExecutionError,
+} from "./engine.js";
 export type {
   DecisionTraceEntry,
   DecisionTraceStatus,
@@ -9,6 +12,8 @@ export type {
   StateId,
   Tension,
   TransitionContext,
+  TransitionExecutionFailureDetails,
+  TransitionFailurePhase,
   TransitionInvariant,
   TransitionInvariantContext,
   TransitionProvenance,

@@ -47,6 +47,7 @@ export type TransitionStatus = "applied" | "no-match" | "rejected";
 export type DecisionTraceStatus =
   | "source-mismatch"
   | "condition-false"
+  | "condition-error"
   | "selected";
 
 export interface DecisionTraceEntry {
@@ -59,6 +60,20 @@ export interface InvariantResult {
   name: string;
   passed: boolean;
   reason: string | null;
+}
+
+export type TransitionFailurePhase = "condition" | "apply" | "invariant";
+
+export interface TransitionExecutionFailureDetails {
+  phase: TransitionFailurePhase;
+  rule: string;
+  ruleIndex: number;
+  invariant: string | null;
+  sourceState: StateId;
+  candidateState: StateId | null;
+  tensionType: string;
+  decisionTrace: readonly DecisionTraceEntry[];
+  invariantResults: readonly InvariantResult[];
 }
 
 export interface TransitionProvenance {

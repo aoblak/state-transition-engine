@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { StateTransitionEngine } from "../src/index.js";
+import {
+  StateTransitionEngine,
+  TransitionExecutionError,
+} from "../src/index.js";
 import type {
   State,
   TransitionInvariant,
@@ -235,7 +238,128 @@ test("records source mismatches and stops tracing after first match", () => {
   ]);
 });
 
-test("throws when a transition produces an empty state id", () => {
+test("preserves decision trace when a rule condition throws", () => {
+  const conditionError = new Error("condition exploded");
+  const failingRules: readonly TransitionRule<DoorData, DoorSignal>[] = [
+    {
+      name: "wrong-source",
+      from: "open",
+      when: () => true,
+      apply: ({ state }) => state,
+    },
+    {
+      name: "broken-condition",
+      from: "closed",
+      when: () => {
+        throw conditionError;
+      },
+      apply: ({ state }) => state,
+    },
+  ];
+
+  const engine = new StateTransitionEngine(failingRules);
+  const initial: State<DoorData> = { id: "closed", data: { locked: true } };
+
+  try {
+    engine.transition(initial, { type: "unlock", payload: "unlock" });
+    assert.fail("expected transition to throw");
+  } catch (error) {
+    assert.ok(error instanceof TransitionExecutionError);
+    assert.equal(error.details.phase, "condition");
+    assert.equal(error.details.rule, "broken-condition");
+    assert.equal(error.details.ruleIndex, 1);
+    assert.equal(error.cause, conditionError);
+    assert.deepEqual(error.details.decisionTrace, [
+      {
+        rule: "wrong-source",
+        ruleIndex: 0,
+        status: "source-mismatch",
+      },
+      {
+        rule: "broken-condition",
+        ruleIndex: 1,
+        status: "condition-error",
+      },
+    ]);
+  }
+});
+
+test("preserves selected rule context when apply throws", () => {
+  const applyError = new Error("apply exploded");
+  const failingRules: readonly TransitionRule<DoorData, DoorSignal>[] = [
+    {
+      name: "broken-apply",
+      from: "closed",
+      when: () => true,
+      apply: () => {
+        throw applyError;
+      },
+    },
+  ];
+
+  const engine = new StateTransitionEngine(failingRules);
+  const initial: State<DoorData> = { id: "closed", data: { locked: true } };
+
+  try {
+    engine.transition(initial, { type: "unlock", payload: "unlock" });
+    assert.fail("expected transition to throw");
+  } catch (error) {
+    assert.ok(error instanceof TransitionExecutionError);
+    assert.equal(error.details.phase, "apply");
+    assert.equal(error.details.rule, "broken-apply");
+    assert.equal(error.details.ruleIndex, 0);
+    assert.equal(error.details.candidateState, null);
+    assert.equal(error.cause, applyError);
+    assert.deepEqual(error.details.decisionTrace, [
+      {
+        rule: "broken-apply",
+        ruleIndex: 0,
+        status: "selected",
+      },
+    ]);
+  }
+});
+
+test("preserves completed invariant results when a later invariant throws", () => {
+  const invariantError = new Error("invariant exploded");
+  const invariants: readonly TransitionInvariant<DoorData, DoorSignal>[] = [
+    {
+      name: "must-be-unlocked",
+      check: ({ candidate }) => !candidate.data.locked,
+    },
+    {
+      name: "broken-invariant",
+      check: () => {
+        throw invariantError;
+      },
+    },
+  ];
+
+  const engine = new StateTransitionEngine(rules, { invariants });
+  const initial: State<DoorData> = { id: "closed", data: { locked: false } };
+
+  try {
+    engine.transition(initial, { type: "open", payload: "open" });
+    assert.fail("expected transition to throw");
+  } catch (error) {
+    assert.ok(error instanceof TransitionExecutionError);
+    assert.equal(error.details.phase, "invariant");
+    assert.equal(error.details.rule, "open-door");
+    assert.equal(error.details.ruleIndex, 1);
+    assert.equal(error.details.invariant, "broken-invariant");
+    assert.equal(error.details.candidateState, "open");
+    assert.equal(error.cause, invariantError);
+    assert.deepEqual(error.details.invariantResults, [
+      {
+        name: "must-be-unlocked",
+        passed: true,
+        reason: null,
+      },
+    ]);
+  }
+});
+
+test("wraps an empty candidate state id as an apply failure", () => {
   const invalidRules: readonly TransitionRule<DoorData, DoorSignal>[] = [
     {
       name: "invalid-transition",
@@ -250,6 +374,9 @@ test("throws when a transition produces an empty state id", () => {
 
   assert.throws(
     () => engine.transition(initial, { type: "unlock", payload: "unlock" }),
-    /produced a state with an empty id/,
+    (error: unknown) =>
+      error instanceof TransitionExecutionError &&
+      error.details.phase === "apply" &&
+      /empty id/.test(error.message),
   );
 });

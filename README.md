@@ -99,13 +99,31 @@ Each decision-trace entry contains:
 - `status` — one of:
   - `source-mismatch` — the rule's `from` constraint did not match the current state,
   - `condition-false` — the source matched but the rule guard returned false,
+  - `condition-error` — the source matched but the rule guard threw,
   - `selected` — the rule was the first complete match.
 
 Rules after a `selected` entry are intentionally absent because first-match execution stops at that point. This preserves deterministic short-circuit semantics and avoids evaluating later guards merely for observability.
 
+## Execution failures
+
+Programming/runtime failures are not converted into normal outcomes.
+
+If a rule condition, rule application, or invariant throws, the engine throws `TransitionExecutionError`. The error preserves:
+
+- failure phase: `condition`, `apply`, or `invariant`,
+- rule name and declaration index,
+- invariant name when applicable,
+- source and candidate state identifiers when available,
+- tension type,
+- decision trace collected up to the failure,
+- invariant results completed before the failure,
+- the original exception as `cause`.
+
+This keeps failures distinguishable from legitimate `no-match` and `rejected` outcomes without hiding programmer errors.
+
 ## Provenance
 
-Each outcome includes deterministic provenance:
+Each normal outcome includes deterministic provenance:
 
 - selected rule,
 - source state,
@@ -135,6 +153,7 @@ without coupling the engine to a specific application domain.
 - Rejected candidates do not mutate the current state.
 - Decision-trace entries preserve declaration order.
 - Invariant checks are recorded in declaration order.
+- Execution failures preserve partial audit context and original causes.
 - Existing engine construction remains supported.
 
 ## Development

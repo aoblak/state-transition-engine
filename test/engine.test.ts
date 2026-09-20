@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { StateTransitionEngine } from "../src/index.js";
-import type { State, TransitionRule } from "../src/index.js";
+import type {
+  State,
+  TransitionInvariant,
+  TransitionRule,
+} from "../src/index.js";
 
 interface DoorData {
   locked: boolean;
@@ -19,6 +23,7 @@ const rules: readonly TransitionRule<DoorData, DoorSignal>[] = [
       ...state,
       data: { ...state.data, locked: false },
     }),
+    reason: "Unlock signal accepted for a locked door.",
   },
   {
     name: "open-door",
@@ -31,7 +36,7 @@ const rules: readonly TransitionRule<DoorData, DoorSignal>[] = [
   },
 ];
 
-test("applies the first matching transition", () => {
+test("applies the first matching transition with provenance", () => {
   const engine = new StateTransitionEngine(rules);
   const initial: State<DoorData> = { id: "closed", data: { locked: true } };
 
@@ -41,9 +46,19 @@ test("applies the first matching transition", () => {
   assert.equal(outcome.next.id, "closed");
   assert.equal(outcome.next.data.locked, false);
   assert.equal(outcome.changed, true);
+  assert.equal(outcome.status, "applied");
+  assert.equal(outcome.reason, "Unlock signal accepted for a locked door.");
+  assert.deepEqual(outcome.provenance, {
+    status: "applied",
+    rule: "unlock-door",
+    sourceState: "closed",
+    candidateState: "closed",
+    tensionType: "unlock",
+    invariantResults: [],
+  });
 });
 
-test("returns an unchanged outcome when no rule matches", () => {
+test("returns an explainable unchanged outcome when no rule matches", () => {
   const engine = new StateTransitionEngine(rules);
   const initial: State<DoorData> = { id: "closed", data: { locked: true } };
 
@@ -52,4 +67,94 @@ test("returns an unchanged outcome when no rule matches", () => {
   assert.equal(outcome.transition, null);
   assert.equal(outcome.next, initial);
   assert.equal(outcome.changed, false);
+  assert.equal(outcome.status, "no-match");
+  assert.equal(outcome.reason, "No transition rule matched the current state and tension.");
+  assert.equal(outcome.provenance.rule, null);
+  assert.equal(outcome.provenance.candidateState, null);
+});
+
+test("rejects a candidate state when an invariant fails", () => {
+  const invariants: readonly TransitionInvariant<DoorData, DoorSignal>[] = [
+    {
+      name: "maintenance-lockout",
+      check: ({ candidate }) => candidate.id !== "open",
+      reason: ({ candidate }) =>
+        `State "${candidate.id}" is blocked while maintenance lockout is active.`,
+    },
+  ];
+
+  const engine = new StateTransitionEngine(rules, { invariants });
+  const initial: State<DoorData> = { id: "closed", data: { locked: false } };
+
+  const outcome = engine.transition(initial, { type: "open", payload: "open" });
+
+  assert.equal(outcome.status, "rejected");
+  assert.equal(outcome.transition, "open-door");
+  assert.equal(outcome.next, initial);
+  assert.equal(outcome.changed, false);
+  assert.equal(
+    outcome.reason,
+    'State "open" is blocked while maintenance lockout is active.',
+  );
+  assert.equal(outcome.provenance.sourceState, "closed");
+  assert.equal(outcome.provenance.candidateState, "open");
+  assert.deepEqual(outcome.provenance.invariantResults, [
+    {
+      name: "maintenance-lockout",
+      passed: false,
+      reason: 'State "open" is blocked while maintenance lockout is active.',
+    },
+  ]);
+});
+
+test("records all invariant checks in deterministic order", () => {
+  const invariants: readonly TransitionInvariant<DoorData, DoorSignal>[] = [
+    {
+      name: "must-be-unlocked",
+      check: ({ candidate }) => !candidate.data.locked,
+    },
+    {
+      name: "state-id-policy",
+      check: ({ candidate }) => candidate.id !== "open",
+      reason: "Opening is disabled by policy.",
+    },
+  ];
+
+  const engine = new StateTransitionEngine(rules, { invariants });
+  const initial: State<DoorData> = { id: "closed", data: { locked: false } };
+
+  const outcome = engine.transition(initial, { type: "open", payload: "open" });
+
+  assert.equal(outcome.status, "rejected");
+  assert.deepEqual(outcome.provenance.invariantResults, [
+    {
+      name: "must-be-unlocked",
+      passed: true,
+      reason: null,
+    },
+    {
+      name: "state-id-policy",
+      passed: false,
+      reason: "Opening is disabled by policy.",
+    },
+  ]);
+});
+
+test("throws when a transition produces an empty state id", () => {
+  const invalidRules: readonly TransitionRule<DoorData, DoorSignal>[] = [
+    {
+      name: "invalid-transition",
+      from: "*",
+      when: () => true,
+      apply: ({ state }) => ({ ...state, id: "" }),
+    },
+  ];
+
+  const engine = new StateTransitionEngine(invalidRules);
+  const initial: State<DoorData> = { id: "closed", data: { locked: true } };
+
+  assert.throws(
+    () => engine.transition(initial, { type: "unlock", payload: "unlock" }),
+    /produced a state with an empty id/,
+  );
 });

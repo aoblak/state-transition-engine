@@ -54,6 +54,13 @@ test("applies the first matching transition with provenance", () => {
     sourceState: "closed",
     candidateState: "closed",
     tensionType: "unlock",
+    decisionTrace: [
+      {
+        rule: "unlock-door",
+        ruleIndex: 0,
+        status: "selected",
+      },
+    ],
     invariantResults: [],
   });
 });
@@ -71,6 +78,18 @@ test("returns an explainable unchanged outcome when no rule matches", () => {
   assert.equal(outcome.reason, "No transition rule matched the current state and tension.");
   assert.equal(outcome.provenance.rule, null);
   assert.equal(outcome.provenance.candidateState, null);
+  assert.deepEqual(outcome.provenance.decisionTrace, [
+    {
+      rule: "unlock-door",
+      ruleIndex: 0,
+      status: "condition-false",
+    },
+    {
+      rule: "open-door",
+      ruleIndex: 1,
+      status: "condition-false",
+    },
+  ]);
 });
 
 test("rejects a candidate state when an invariant fails", () => {
@@ -98,6 +117,18 @@ test("rejects a candidate state when an invariant fails", () => {
   );
   assert.equal(outcome.provenance.sourceState, "closed");
   assert.equal(outcome.provenance.candidateState, "open");
+  assert.deepEqual(outcome.provenance.decisionTrace, [
+    {
+      rule: "unlock-door",
+      ruleIndex: 0,
+      status: "condition-false",
+    },
+    {
+      rule: "open-door",
+      ruleIndex: 1,
+      status: "selected",
+    },
+  ]);
   assert.deepEqual(outcome.provenance.invariantResults, [
     {
       name: "maintenance-lockout",
@@ -136,6 +167,70 @@ test("records all invariant checks in deterministic order", () => {
       name: "state-id-policy",
       passed: false,
       reason: "Opening is disabled by policy.",
+    },
+  ]);
+});
+
+test("records source mismatches and stops tracing after first match", () => {
+  let evaluatedAfterSelection = false;
+
+  const traceRules: readonly TransitionRule<DoorData, DoorSignal>[] = [
+    {
+      name: "wrong-source",
+      from: "open",
+      when: () => {
+        throw new Error("source-mismatched guard must not be evaluated");
+      },
+      apply: ({ state }) => state,
+    },
+    {
+      name: "guard-rejected",
+      from: "*",
+      when: () => false,
+      apply: ({ state }) => state,
+    },
+    {
+      name: "selected-rule",
+      from: "closed",
+      when: () => true,
+      apply: ({ state }) => ({
+        ...state,
+        data: { ...state.data, locked: false },
+      }),
+    },
+    {
+      name: "after-selection",
+      from: "*",
+      when: () => {
+        evaluatedAfterSelection = true;
+        return true;
+      },
+      apply: ({ state }) => state,
+    },
+  ];
+
+  const engine = new StateTransitionEngine(traceRules);
+  const initial: State<DoorData> = { id: "closed", data: { locked: true } };
+
+  const outcome = engine.transition(initial, { type: "unlock", payload: "unlock" });
+
+  assert.equal(outcome.transition, "selected-rule");
+  assert.equal(evaluatedAfterSelection, false);
+  assert.deepEqual(outcome.provenance.decisionTrace, [
+    {
+      rule: "wrong-source",
+      ruleIndex: 0,
+      status: "source-mismatch",
+    },
+    {
+      rule: "guard-rejected",
+      ruleIndex: 1,
+      status: "condition-false",
+    },
+    {
+      rule: "selected-rule",
+      ruleIndex: 2,
+      status: "selected",
     },
   ]);
 });

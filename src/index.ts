@@ -1,5 +1,7 @@
 export { StateTransitionEngine } from "./engine.js";
 export type {
+  DecisionTraceEntry,
+  DecisionTraceStatus,
   EngineOptions,
   InvariantResult,
   Outcome,

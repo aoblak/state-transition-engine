@@ -1,6 +1,6 @@
 # state-transition-engine
 
-A generic state transition framework for modeling states, tensions, transitions, validation, and explainable outcomes.
+A generic state transition framework for modeling states, tensions, transitions, validation, and auditable outcomes.
 
 ## Core model
 
@@ -8,7 +8,7 @@ A generic state transition framework for modeling states, tensions, transitions,
 - **Tension** — a pressure, constraint, or unresolved difference acting on the state.
 - **Transition** — a rule-governed change from one state to another.
 - **Invariant** — a condition that must remain true before a candidate state may be committed.
-- **Outcome** — the complete result of an attempted transition, including status, reason, and provenance.
+- **Outcome** — the complete result of an attempted transition, including status, reason, provenance, and decision trace.
 
 The engine keeps domain logic separate from transition mechanics so the same model can be reused across different problem domains.
 
@@ -18,7 +18,14 @@ The engine keeps domain logic separate from transition mechanics so the same mod
 State + Tension
       |
       v
-match first rule
+scan rules in declaration order
+      |
+      +--> source mismatch
+      |
+      +--> condition false
+      |
+      v
+first matching rule
       |
       v
 produce candidate state
@@ -31,6 +38,8 @@ pass        fail
  v            v
 commit      reject
 ```
+
+Rule evaluation stops immediately after the first selected rule. Later guards are not evaluated.
 
 A rejected transition never commits its candidate state.
 
@@ -69,6 +78,8 @@ console.log(result.status); // applied
 console.log(result.next.id); // active
 console.log(result.reason); // A start signal activates the system.
 console.log(result.provenance.rule); // activate
+console.log(result.provenance.decisionTrace);
+// [{ rule: "activate", ruleIndex: 0, status: "selected" }]
 ```
 
 ## Outcome statuses
@@ -77,23 +88,54 @@ console.log(result.provenance.rule); // activate
 - `no-match` — no transition rule matched the current state and tension.
 - `rejected` — a rule matched and produced a candidate state, but one or more invariants failed.
 
+## Decision trace
+
+Every attempted transition records the rules that were actually considered, in declaration order.
+
+Each decision-trace entry contains:
+
+- `rule` — rule name,
+- `ruleIndex` — zero-based declaration position,
+- `status` — one of:
+  - `source-mismatch` — the rule's `from` constraint did not match the current state,
+  - `condition-false` — the source matched but the rule guard returned false,
+  - `selected` — the rule was the first complete match.
+
+Rules after a `selected` entry are intentionally absent because first-match execution stops at that point. This preserves deterministic short-circuit semantics and avoids evaluating later guards merely for observability.
+
+## Provenance
+
 Each outcome includes deterministic provenance:
 
 - selected rule,
 - source state,
 - candidate state,
 - tension type,
+- ordered decision trace,
 - invariant results,
 - human-readable reason.
+
+This allows a caller to distinguish:
+
+```
+"What happened?"
+from
+"Why was this transition selected or rejected?"
+```
+
+without coupling the engine to a specific application domain.
 
 ## Design guarantees
 
 - Deterministic first-match rule selection.
+- Rule guards are evaluated only when their source constraint matches.
+- Rule evaluation stops after the first selected rule.
 - Domain-neutral transition mechanics.
 - Candidate states are validated before commit.
 - Rejected candidates do not mutate the current state.
+- Decision-trace entries preserve declaration order.
 - Invariant checks are recorded in declaration order.
-- Existing one-argument engine construction remains supported.
+- Existing engine construction remains supported.
 
 ## Development
 

@@ -1,7 +1,7 @@
 {
   "name": "state-transition-engine",
-  "version": "0.2.0",
-  "description": "A generic state transition framework for modeling states, tensions, transitions, validation, and explainable outcomes.",
+  "version": "0.3.0",
+  "description": "A generic state transition framework for modeling states, tensions, transitions, validation, and auditable outcomes.",
   "type": "module",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",

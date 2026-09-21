@@ -267,13 +267,35 @@ export class StateTransitionEngine<TData = unknown, TPayload = unknown> {
       };
     }
 
+    let reason: string;
+
+    try {
+      reason = resolveRuleReason(rule, context);
+    } catch (error) {
+      throw new TransitionExecutionError(
+        `Transition "${rule.name}" failed while resolving its reason.`,
+        {
+          phase: "reason",
+          rule: rule.name,
+          ruleIndex: selectedRuleIndex,
+          invariant: null,
+          sourceState: state.id,
+          candidateState: candidate.id,
+          tensionType: tension.type,
+          decisionTrace: [...decisionTrace],
+          invariantResults: [...invariantResults],
+        },
+        error,
+      );
+    }
+
     return {
       previous: state,
       next: candidate,
       transition: rule.name,
       changed: candidate !== state || candidate.id !== state.id,
       status: "applied",
-      reason: resolveRuleReason(rule, context),
+      reason,
       provenance: {
         status: "applied",
         rule: rule.name,

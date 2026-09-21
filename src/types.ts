@@ -62,7 +62,11 @@ export interface InvariantResult {
   reason: string | null;
 }
 
-export type TransitionFailurePhase = "condition" | "apply" | "invariant";
+export type TransitionFailurePhase =
+  | "condition"
+  | "apply"
+  | "invariant"
+  | "reason";
 
 export interface TransitionExecutionFailureDetails {
   phase: TransitionFailurePhase;

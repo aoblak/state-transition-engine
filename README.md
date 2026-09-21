@@ -43,6 +43,21 @@ Rule evaluation stops immediately after the first selected rule. Later guards ar
 
 A rejected transition never commits its candidate state.
 
+## Callback purity contract
+
+Transition callbacks are part of the caller's domain logic and are expected to be pure with respect to their input context.
+
+In particular, `when`, `apply`, invariant checks/reasons, and transition `reason` callbacks must not mutate the supplied current state, tension, or previously produced audit data in place.
+
+The engine controls which candidate state is returned as committed or rejected, but it does not deep-clone or sandbox arbitrary user objects. Therefore:
+
+- return a new state/data object from `apply` when data changes,
+- do not mutate `context.state` or nested objects reachable from it,
+- do not mutate the tension payload during evaluation,
+- treat invariant and reason callbacks as read-only observers.
+
+This distinction matters for rejection semantics: the engine never commits a rejected candidate, but an impure callback could still mutate a caller-owned object before rejection.
+
 ## Minimal example
 
 ```ts
@@ -108,9 +123,9 @@ Rules after a `selected` entry are intentionally absent because first-match exec
 
 Programming/runtime failures are not converted into normal outcomes.
 
-If a rule condition, rule application, or invariant throws, the engine throws `TransitionExecutionError`. The error preserves:
+If a rule condition, rule application, invariant callback, or transition reason callback throws, the engine throws `TransitionExecutionError`. The error preserves:
 
-- failure phase: `condition`, `apply`, or `invariant`,
+- failure phase: `condition`, `apply`, `invariant`, or `reason`,
 - rule name and declaration index,
 - invariant name when applicable,
 - source and candidate state identifiers when available,
@@ -150,7 +165,8 @@ without coupling the engine to a specific application domain.
 - Rule evaluation stops after the first selected rule.
 - Domain-neutral transition mechanics.
 - Candidate states are validated before commit.
-- Rejected candidates do not mutate the current state.
+- The engine never commits a rejected candidate as the next state.
+- Callback purity is a caller contract; arbitrary user objects are not deep-cloned or sandboxed.
 - Decision-trace entries preserve declaration order.
 - Invariant checks are recorded in declaration order.
 - Execution failures preserve partial audit context and original causes.
